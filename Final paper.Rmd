@@ -85,73 +85,11 @@ The result could potentially be used to predict point-spread in the upcoming NBA
 
 # Model
 field goal percentage~team+opponent+avg field goal percentage+Opp avg
-```{r}
-model1<- lm(PointSpread~Team+Opponent+
-             FieldGoalPercent+OppFieldGoalPercent+
-             ThreePointPercent+OppThreePointPercent+
-             FreeThrowPercent+OppFreeThrowPercent+
-             TotalRebounds+OppTotalRebound+
-             Turnovers+OppTurnover, stats_2014)
 
-model2<- lm(WINorLOSS~Team+Opponent+
-             FieldGoalPercent+OppFieldGoalPercent+
-             ThreePointPercent+OppThreePointPercent+
-             FreeThrowPercent+OppFreeThrowPercent+
-             TotalRebounds+OppTotalRebound+
-             Turnovers+OppTurnover, stats_2014)
-
-Bayes_Model_Binary <- brm(formula = WINorLOSS~Team+Opponent+
-             FieldGoalPercent+OppFieldGoalPercent+
-             ThreePointPercent+OppThreePointPercent+
-             FreeThrowPercent+OppFreeThrowPercent+
-             TotalRebounds+OppTotalRebound+
-             Turnovers+OppTurnover,
-                          data=stats_2014, 
-                          chains = 2,
-                          family = bernoulli(link = "logit"),
-                          seed = 123)
-
-summary(Bayes_Model_Binary)
-
-
-model%>%
-  tidy() %>%
-  kable()
-```
 
 point spread(team points-opponent points) ~  team + opponent_team + predicted_field_goal_percentage(past game avg home or opp) + predicted_opponent_field_goal_percentage + predicted_3point_percent + predicted_opponent3point_percent
 ```{r, include=FALSE}
-model1<- lm(PointSpread~Team+Opponent+
-             FieldGoalPercent+OppFieldGoalPercent+
-             ThreePointPercent+OppThreePointPercent+
-             FreeThrowPercent+OppFreeThrowPercent+
-             TotalRebounds+OppTotalRebound+
-             Turnovers+OppTurnover, stats_2014)
 
-model2<- lm(WINorLOSS~Team+Opponent+
-             FieldGoalPercent+OppFieldGoalPercent+
-             ThreePointPercent+OppThreePointPercent+
-             FreeThrowPercent+OppFreeThrowPercent+
-             TotalRebounds+OppTotalRebound+
-             Turnovers+OppTurnover, stats_2014)
-
-Bayes_Model_Binary <- brm(formula = WINorLOSS~Team+Opponent+
-             FieldGoalPercent+OppFieldGoalPercent+
-             ThreePointPercent+OppThreePointPercent+
-             FreeThrowPercent+OppFreeThrowPercent+
-             TotalRebounds+OppTotalRebound+
-             Turnovers+OppTurnover,
-                          data=stats_2014, 
-                          chains = 2,
-                          family = bernoulli(link = "logit"),
-                          seed = 123)
-
-summary(Bayes_Model_Binary)
-
-
-model%>%
-  tidy() %>%
-  kable()
 ```
 
 # Result
