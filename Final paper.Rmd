@@ -1,37 +1,64 @@
 ---
-title: "Multivariate linear regression: A data driven approach to predicting midseason NBA point spreads"
+title: "Multiple linear regression: A data driven approach to predicting midseason NBA point spreads"
 author: "Mackenzie Qu"
 date: "`r format(Sys.time(), '%d %B %Y')`"
-output:
-  pdf_document: default
-  bookdown::pdf_document2:
-    citation_package: natbib
+
 abstract: |
-  |From the squeak of shoes on the court to the cheers of fans from the bleachers, the excitment of basketball lies within its fast and unperdictable nature, which gradifies a massive crowd of gamblers. For the purpose of predicting pointspread outcome for any midseason NBA games, multiple regression models are developed using team's previous game stats from the same season. The model shows an 83% accuracy within 3 points, which is then tested using randomly selected midseason games from 2015-2018. Our model for pointspread is also applicable with regards to predicting the Money Line outcome, which may provide an overview of the upcoming season betting lines.
-  |
-  |Keywords: basketball, Bayesian logistic regression, multivariate linear regression, NBA, pointspread
+  |Basketball has gained millions of passionate fans over the years, and its intensity often extends beyond the courts into various bets. For the purpose of predicting pointspread outcome for any midseason NBA games, a multiple linear regression model is developed using team's previous game stats from the same season. The model is then tested using randomly selected midseason games from 2015. Our model for pointspread is also applicable with regards to predicting the Money Line outcome, which may provide an overview of the upcoming season betting lines.
+
+  |**Keywords:** basketball; linear regression; NBA prediction; pointspread; statistics
+output:
+  bookdown::pdf_document2: 
+    citation_package: natbib
+    fig_caption: yes
+    tab_caption: yes
+  pdf_document: default
 bibliography: reference.bib
 ---
 
-```{r setup, include=FALSE}
+```{r setup, include=FALSE, warning=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_knit$set(root.dir= normalizePath('..'))
+knitr::opts_chunk$set(error = FALSE)
 # Used Packages
-library(tidyverse)
-library(dplyr)
-library(haven)
-library(tidyr)
-library(knitr)
-library(kableExtra)
-library(readr)
-library(AICcmodavg)
-library(broom)
-library(corrr)
-library(brms)
+library(tidyverse)#data
+library(dplyr)#data
+library(haven)#data
+library(tidyr)#data
+library(knitr)#data
+library(kableExtra)#data
+library(readr)#data
+library(AICcmodavg)#nice plot summary tables
+library(broom)#data
+library(corrr)#model
+library(brms)#model
+library(modelr)#data
+library(ggplot2)#data
+library(sjPlot)
+
+library(ggpubr)#data
 ### Data ###
 # Import Data
 games_stats <- read_csv("nba.games.stats.csv")
+midgame<- read_csv("NBA.csv")
 head(games_stats)
-# Clean Data
+```
+
+```{r, warning=FALSE}
+### Clean Data ###
+## Midgame Data ##
+# Create third quarter point column
+midgame<-midgame%>%
+  mutate(third_quarter_score = select(., Q1:Q3) %>% rowSums(na.rm = TRUE))
+
+# take only season 2014 for data training purposes
+midgame_2014<-midgame%>%
+  filter(Season==14)%>%
+  select(Date,
+         Team,
+         third_quarter_score)
+  
+## Game Stats Data ##
 # Create point spread variable column
 games_stats <- games_stats%>%
   mutate(PointSpread=TeamPoints-OpponentPoints)
@@ -43,7 +70,8 @@ games_stats <- games_stats%>%
   mutate_at(vars(WINorLOSS), .funs = 
               funs(case_when(.=="W"~1,
                              .=="L"~0)))
-# We have chosen to use 2014season to build our model
+
+# Append chosen predictors to a new dataframe
 stats_2014 <- 
   games_stats %>% 
   select(Team, 
@@ -67,115 +95,1569 @@ stats_2014 <-
          OppTurnover = Opp.Turnovers)%>%
   filter(games_stats$DateNum>=20141028& games_stats$DateNum<=20150616) # filter home game only to avoid repetition
 
-# Order by date for later convenience
-stats_2014<- stats_2014[order(stats_2014$Date),]
-# We will use games randomly chosen from 2015 to 2018 to verify 
-# our model accuracy
+```
+
+```{r}
+## Trying to adjust model
+## From the lm() function with raw data, we find that there is a relationship
+## between the dependent and independent vars. However, we will not have access 
+## the predictors in prior to the game. Therefore, we will have to predict 
+## each independent variable using the game stats we already have
+
+# Add cumulative field goal average for each game played as a part of the data
+stats_2014<-stats_2014%>%
+  group_by(Team)%>%
+  mutate(AvgTeamPoints=(cumsum(TeamPoints)-TeamPoints)/(Game-1))
+
+stats_2014<-stats_2014%>%
+  group_by(Team)%>%
+  mutate(AvgOppPoints=(cumsum(OpponentPoints)-OpponentPoints)/(Game-1))
+
+stats_2014<-stats_2014%>%
+  group_by(Team)%>%
+  mutate(AvgFieldGoalPercent=(cumsum(FieldGoalPercent)-FieldGoalPercent)/(Game-1))
+
+stats_2014<-stats_2014%>%
+  group_by(Team)%>%
+  mutate(AvgOppFieldGoalPercent=(cumsum(OppFieldGoalPercent)-OppFieldGoalPercent)/(Game-1))
+
+stats_2014<-stats_2014%>%
+  group_by(Team)%>%
+  mutate(AvgThreePointPercent=(cumsum(ThreePointPercent)-ThreePointPercent)/(Game-1))
+
+stats_2014<-stats_2014%>%
+  group_by(Team)%>%
+  mutate(AvgOppThreePointPercent=(cumsum(OppThreePointPercent)-OppThreePointPercent)/(Game-1))
+
+stats_2014<-stats_2014%>%
+  group_by(Team)%>%
+  mutate(AvgFreeThrowPercent=(cumsum(FreeThrowPercent)-FreeThrowPercent)/(Game-1))
+
+stats_2014<-stats_2014%>%
+  group_by(Team)%>%
+  mutate(AvgOppFreeThrowPercent=(cumsum(OppFreeThrowPercent)-OppFreeThrowPercent)/(Game-1))
+
+stats_2014<-stats_2014%>%
+  group_by(Team)%>%
+  mutate(AvgTotalRebounds=(cumsum(TotalRebounds)-TotalRebounds)/(Game-1))
+
+stats_2014<-stats_2014%>%
+  group_by(Team)%>%
+  mutate(AvgOppTotalRebounds=(cumsum(OppTotalRebound)-OppTotalRebound)/(Game-1))
+
+stats_2014<-stats_2014%>%
+  group_by(Team)%>%
+  mutate(AvgTurnovers=(cumsum(Turnovers)-Turnovers)/(Game-1))
+
+stats_2014<-stats_2014%>%
+  group_by(Team)%>%
+  mutate(AvgOppTurnovers=(cumsum(OppTurnover)-OppTurnover)/(Game-1))
+
+## Merge two data together ##
+mid_2014<-merge(stats_2014, midgame_2014, 
+                by.x = c("Date", "Team"),
+                by.y = c("Date", "Team"))
+
+mid_2014<-merge(mid_2014, midgame_2014,
+                by.x = c("Date", "Opponent"),
+                by.y = c("Date", "Team"))
+# rename
+mid_2014<-mid_2014%>%
+  rename(TeamThirdQuarter=third_quarter_score.x,
+         OppThirdQuarter=third_quarter_score.y)
+
+# Add point spread third quarter
+ThirdQuarterPointSpread<-mid_2014$TeamThirdQuarter-mid_2014$OppThirdQuarter
+mid_2014<-cbind(mid_2014, ThirdQuarterPointSpread)
+
+# select only second half season data for accuracy, 
+# as we do not know a lot about the teams until midseason
+mid_2014<- mid_2014%>%
+  filter(Game>41)
+
+
 
 ```
 
-
+\newpage
 # Introduction
-Basketball has gained millions of passionate fans over the years, and its intensity often extends beyond the courts into various bets. As the NBA remains to be the best basketball league in the world, the betting market of it also holds significant value. The NBA is composed of 30 teams; each team plays 83 games for a regular season which provides 1230 opportunities for gamblers to cash in. The most popular basketball bet is the Money Line, in which bettors simply choose a desired team to win. A more intriguing bet on point spread, however, has been selected to be the main focus in this report as it also includes the Money Line results. Point spread is when one bets on a team to win by a specific number or not lose more than that number. In this paper, we experimented with both multivariate linear regression model and Bayesian regression model with @citeR, hoping to predict a profitable betting line on the spreads of NBA games.
 
-For the purpose of this paper, actual NBA game statistics(@cite_data) from 2014 to 2018 are used to assist the model development. The data includes all games in a season, along with game stats such as field goal percentage and 3 point percentage generated by each team. We have chosen to use the the average of field goal percentage, 3 point percentage, free throw percentage, total rebounds, assists, and turnovers of both team as predictor variables. In addition, we have also used a Bayesian logistic regression to predict the general outcome for each game. Our model for point spread has a residual standard error of 3.8, which is inadequate in accuracy in comparison to the betting lines. However, the Bayesian model for predicting the winning team appears to be significantly accurate through verification.
+From the squeak of sneakers on the court to the cheers of fans from the bleachers, the excitement of basketball lies within its fast and unpredictable nature, which gratifies a massive crowd of gamblers. As the NBA remains to be the best basketball league in the world, its betting market also holds significant value. The NBA is composed of 30 teams; each team plays 82 games for a regular season which provides 1230 opportunities for gamblers to cash in. Each game is divided by 4 even quarters with the possibility of overtime if the result was a tie. Upon research, the online betting pool does not close until the fourth quarter, indicating that information gathered during the first three quarters of the game could be crucial. 
 
-The result could potentially be used to predict point-spread in the upcoming NBA season. However, the model is not sufficient enough to achieve the accuracy of the NBA betting lines chosen by professional oddsmakers. Our model could be significantly improved by adding the actually in-game statistics as a predictor. The rest of the report proceeds as follows. Section 2 describes the historical NBA data we have used to develop and verify the models, including some adjustments made. In section 3, we demonstrate various models including multivariate linear regression and Bayesian regression, aiming to provide statistical reasoning behind the results. Section 4 shows the result of the models and verifies the model performance through randomly selected games and their betting lines respectively. In which the results will be discussed thoroughly in section 5, as well as some potential weaknesses and future work. 
+In this paper, we are interested in predicting the outcome of two popular bets - the Point Spread and the Money Line. As the most popular wager, the Money Line simply allows one to bet on a desired team to win. A more intriguing bet on point spread is when one bets on a team to win by a specific number or not lose more than that number. In this paper, we have chosen to predict the Point Spread, which includes the Money Line outcome by experimenting with multiple linear regression models, hoping to predict a profitable betting line on the spreads of NBA games.
+
+For the purpose of this paper, two datasets containing the actual NBA game statistics (@cite_stats1)(@cite_gamestats) are used to assist the model development. The data includes all games in a regular season, along with game stats such as field goal percentage and 3 point percentage generated by each team. We have chosen to use the cumulative average of field goal percentage, 3 point percentage, free throw percentage, total rebounds, assists, turnovers, as well as the total points until the third quarter as predictor variables. Our model for point spread has a residual standard error of 7.139, which is inadequate in accuracy in comparison to the betting lines. However, the accuracy for predicting the winning team appears to be significant through verification. The data wrangling and model for this paper is done using statistical language @citeR in Rmarkdown(@cite_rmarkdown1)(@cite_rmarkdown2)(@cite_rmarkdown3). To reproduce the result, code can be accessed at: "https://github.com/mackenziequ/NBA-prediction".
+
+The results are able to predict point-spread and winning margin in the upcoming NBA season for all purposes. However, the model is not sufficient enough to achieve the accuracy of the NBA Point Spread betting lines chosen by professional oddsmakers due to basketball's unpredictable nature. Our model could be significantly improved by replacing the cumulative averages with actual in game data by the third quarter. The rest of the report proceeds as follows. Section 2 describes the historical NBA data we have used to develop and verify the models, including some adjustments made. In section 3, we demonstrate the model development, aiming to provide a statistical reasoning behind the results. Section 4 shows the result of the models and verifies the model performance through randomly selected games and their betting lines respectively. In which the results will be discussed thoroughly in section 5, as well as some potential weaknesses and future work. 
+
 
 # Data
-```{r}
 
-stats_2014<-stats_2014%>%
-  group_by(Team)%>%
-  mutate(cummulative_sum=cumsum(FieldGoalPercent), 
-         AvgFieldGoalPercent=(cumsum(FieldGoalPercent)-FieldGoalPercent)/(Game-1))
+With the intention of predicting the NBA game results, we have chosen two self-contained NBA datasets available on Kaggel. Both datasets are observational, in which it is gathered from historical NBA games in full measure. From all the historical data, we have sampled the 2014-2015 season for model training purposes. The 2014-2015 season has in total 1230 games, the datasets however, both contain 2460 variables as each game is recorded twice for both the home team and the away team. Though the complete historical data of each team may seem useful, we have chosen to not include any historical data from season 2013-2014 due to players’ leave or trade, which will result in significant differences in a team’s performance.
 
-stats_2014<-stats_2014%>%
-  group_by(Team)%>%
-  mutate(cummulative_sum=cumsum(OppFieldGoalPercent), 
-         AvgOppFieldGoalPercent=(cumsum(OppFieldGoalPercent)-OppFieldGoalPercent)/(Game-1))
+## "NBA Team Game Stats from 2014 to 2018" - Data
+
+“NBA Team Game Stats from 2014 to 2018” (@cite_stats1) contains information of every NBA  game played in 2014-2018. The dataset was mined from basketball reference(@cite_basketballreference) and published in Kaggle. Its main focus are the points and game stats for both home and away teams in a game, and it contains the main predictor variables in the model. However, some variables, such as off-rebounds and assists are not used as they do not have a significant impact on the points made in a game. 
+The dataset is beneficial such that it is well organized, and majority of the variables contribute to the total points gained in a game. However,  it is limited to the results of a game, in which some of the variables have to be altered for model fitting since we would not have any knowledge of the outcome prior to the game. 
+Therefore, we have calculated and attached the cumulative averages of the Field Goal Percent, Three Point Percent, Free ThrowPercent, Total Rebounds, and Turnovers for each team before the game. This allows us to develop an actual prediction model of the game results without any information of the outcomes. We have also added point spread as the difference of two team’s total points into the dataset for modeling purposes, which can be seen from the preview of the data(Table \@ref(tab:teamstats)).
+
+## “1996-2019 NBA Stats Complete With Player Stats" - Data
+
+“1996-2019 NBA Stats Complete With Player Stats”(@cite_gamestats) created by another Kaggle contributor contains NBA game statistics with a more detailed approach. In addition to the team stats for each game, player stats are also included which makes in total 142 variables. However, we have only chosen the most favorable variable for our model - points gained in each quarter. Though basketball games are fast-paced, and the result may change drastically in any given minute, this data gives us a better understanding of the in-game statistics and performance of each team; which is proven significant for the prediction. 
+
+For the purpose of our model, we simply added the points gained in the first three quarters for each game played by each team; the players stats and other variables for each game are not used since it will create too many categorical variables in the model with little significance. In addition, from the preview of the cleaned data(Table \@ref(tab:midstats)), it is shown that we have kept the date and team for merging purposes. Note that all variables from the preceding dataset is included, however, this data has presented more obstacles during the data cleaning process thus was not chosen.
+
+Upon merging the two datasets by date and team, we have a complete dataset containing all the variables needed for visualization and modeling. Note that the dataset only contains games after the midseason, as we will provide the reasoning below.
 
 
-plot(stats_2014$AvgFieldGoalPercent, stats_2014$PointSpread)
-plot(stats_2014$FieldGoalPercent, stats_2014$PointSpread)
+\newpage
 
-perd_field_goal_percent<- lm(FieldGoalPercent~Team+Opponent+AvgFieldGoalPercent+AvgOppFieldGoalPercent, data = stats_2014)
-summary(perd_field_goal_percent)
+```{r teamstats, message=FALSE, warning=FALSE}
+knitr::kable(head(stats_2014[1:10]), format="latex", booktabs=TRUE, caption = "NBA Team Game Stats from 2014 to 2018 - 2014 data preview") %>% 
+  kable_styling(latex_options="scale_down")
+```
 
-predict(perd_field_goal_percent, stats_2014)
+```{r }
+knitr::kable(head(stats_2014[11:17]), format="latex", booktabs=TRUE) %>% 
+  kable_styling(latex_options="scale_down")
 
-stats_2014<-add_predictions(stats_2014, perd_field_goal_percent)
+knitr::kable(head(stats_2014[18:24]), format="latex", booktabs=TRUE) %>% 
+  kable_styling(latex_options="scale_down")
 
-plot(stats_2014$pred, stats_2014$PointSpread)
+knitr::kable(head(stats_2014[25:30]), format="latex", booktabs=TRUE) %>% 
+  kable_styling(latex_options="scale_down")
 
 ```
 
+
+
+
+
+\newpage
+
+```{r midstats, message=FALSE, warning=FALSE}
+knitr::kable(head(midgame_2014), caption = "1996-2019 NBA Stats Complete With Player Stats - 2014 data preview")
+```
+
+\newpage
+
+## Data Discussion
+The original dataset contains all games played in Season 2014; upon data wrangling, we first focus on some basic data among teams. 
+
+Figure \@ref(fig:pointdistribution) shows the distribution of total points scored by team. The graph shows the lowest point scored of 65 points by DEN(Denver Nuggets), and the highest point scored of 144. It is able to show the performance level of each team by their total points. In addition, we observe that the majority of the teams have a centered distribution. However, some teams such as CHI(Chicago Bulls) have less observable performance center, in which the point scored has a lower frequency and seems evenly distributed throughout. In this case, it becomes harder to predict the expected score in a game. Whereas MIL(Milwaukee Bucks) has shown to have a significantly high frequency scoring points in between 90-100, which leads to a slightly more accurate prediction. 
+
+Secondly, we are interested in observing the cumulative averages for total points, and whether it stabilizes or keeps fluctuating. Though the running average for each team is not one of the predictor variables with the reasoning in Section 3, it still provides us an overview of each team's performance throughout the season, which provides references to the other variables such as Field Goal Percent. Figure \@ref(fig:cumavg) demonstrates the cumulative average for each team through the whole season; it is indicated that the average stabilizes for the majority of the teams in the second half of the season with a couple exceptions. OKC(Oklahoma City Thunder) shows a constant increase in average throughout the season, and in the second half of the season it's average has gone up by more than 5 points. On the other hand, TOR(Toronto Raptors)’s average seems to fluctuate even in the second half. 
+
+From the overview of the data, we could conclude that for the majority of the teams, the total points is centered at its mean, and the cumulative averages stabilize after midseason. Therefore we filtered the data, starting from the 41st game. We have chosen to not present the point spread distribution since it is not sufficient to convey any information by itself. Though we can conclude some information about the teams, our data is limited to the cumulative average, which is not sufficient enough to predict the Point Spread without any in-game information. Therefore, the third quarter data from “1996-2019 NBA Stats Complete With Player Stats - Data” drastically improves the model. Still, we do not have any additional in-game information to verify the performance of each team during a game besides the total points in the third quarter, which as a result, is shown by our model. 
+
+Our data wrangling is completed in the statistical language R(@citeR), using haven(@cite_haven), tidyverse(@cite_tidyverse), dplyr(@cite_dplyr), ggplot2(@cite_ggplot2), ggpubr(@cite_ggpubr), modelr(@cite_modelr), tydyr(@cite_tidyr), knitr(@cite_knitr1)(@cite_knitr2)(@cite_knitr3), kabelExtra(@cite_kableExtra), broom(cite_broom), and AICcmodavg(@cite_AIC) 
+
+
+```{r pointdistribution, fig.cap= "Total Points Scored in Season 2014 by Team", fig.dim=c(50,30),echo=FALSE}
+p1<-stats_2014%>%
+  subset(Team == "ATL")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="ATL ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+p2<-stats_2014%>%
+  subset(Team == "BOS")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="BOS ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+p3<-stats_2014%>%
+  subset(Team == "BRK")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="BRK ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+p4<-stats_2014%>%
+  subset(Team == "CHO")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="CHO ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+p5<-stats_2014%>%
+  subset(Team == "CHI")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="CHI ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+p6<-stats_2014%>%
+  subset(Team == "CLE")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="CLE ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+p7<-stats_2014%>%
+  subset(Team == "DAL")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="DAL ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+p8<-stats_2014%>%
+  subset(Team == "DEN")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="DEN ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+p9<-stats_2014%>%
+  subset(Team == "DET")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="DET ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+p10<-stats_2014%>%
+  subset(Team == "GSW")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="GSW ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+p11<-stats_2014%>%
+  subset(Team == "HOU")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="HOU ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+p12<-stats_2014%>%
+  subset(Team == "IND")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="IND ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+p13<-stats_2014%>%
+  subset(Team == "LAC")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="LAC ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+p14<-stats_2014%>%
+  subset(Team == "LAL")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="LAL ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+p15<-stats_2014%>%
+  subset(Team == "MEM")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="MEM ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+p16<-stats_2014%>%
+  subset(Team == "MIA")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="MIA  ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+p17<-stats_2014%>%
+  subset(Team == "MIL")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="MIL",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+p18<-stats_2014%>%
+  subset(Team == "MIN")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="MIN ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+p19<-stats_2014%>%
+  subset(Team == "NOP")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="NOP ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+p20<-stats_2014%>%
+  subset(Team == "NYK")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="NYK ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+p21<-stats_2014%>%
+  subset(Team == "OKC")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="OKC ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+p22<-stats_2014%>%
+  subset(Team == "ORL")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="ORL  ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+p23<-stats_2014%>%
+  subset(Team == "PHI")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="PHI  ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+p24<-stats_2014%>%
+  subset(Team == "PHO")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="PHO",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+p25<-stats_2014%>%
+  subset(Team == "POR")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="POR  ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+p26<-stats_2014%>%
+  subset(Team == "SAC")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="SAC  ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+p27<-stats_2014%>%
+  subset(Team == "SAS")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="SAS  ",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+p28<-stats_2014%>%
+  subset(Team == "TOR")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="TOR",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+p29<-stats_2014%>%
+  subset(Team == "UTA")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  labs(title="UTA",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+p30<-stats_2014%>%
+  subset(Team == "WAS")%>%
+  ggplot(aes(x=TeamPoints))+
+  geom_bar(color="blue", fill="white")+
+  labs(title="WAS",
+        x ="Team Points Distribution", y = "Frequency")+
+  theme_light()+
+  scale_x_continuous(breaks = seq(min(stats_2014$TeamPoints), 
+                                       max(stats_2014$TeamPoints), 
+                                       by = 10))+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,p11,p12,p13,p14,p15,p16,p17,p18,
+          p19,p20,p21,p22,p23,p24,p25,p26,p27,p28,p29,p30,
+          ncol = 6, nrow = 5)
+
+
+```
+
+
+
+
+```{r cumavg, fig.cap= "Cumulative Average for Total Points by Team", fig.dim=c(50,30),echo=FALSE, warning=FALSE, message=FALSE}
+ca1<-stats_2014%>%
+  subset(Team == "ATL")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="ATL",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca2<-stats_2014%>%
+  subset(Team == "BOS")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="BOS",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca3<-stats_2014%>%
+  subset(Team == "BRK")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="BRK",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca4<-stats_2014%>%
+  subset(Team == "CHI")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="CHI",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+ca5<-stats_2014%>%
+  subset(Team == "CHO")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="CHO",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca6<-stats_2014%>%
+  subset(Team == "CLE")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="CLE",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+ca7<-stats_2014%>%
+  subset(Team == "DAL")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="DAL",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca8<-stats_2014%>%
+  subset(Team == "DEN")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="DEN",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+ca9<-stats_2014%>%
+  subset(Team == "DET")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="DET",
+        x ="Game", y = "Average Team Points")+
+theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+ca10<-stats_2014%>%
+  subset(Team == "GSW")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="GSW",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+ca11<-stats_2014%>%
+  subset(Team == "HOU")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="HOU",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca12<-stats_2014%>%
+  subset(Team == "IND")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="IND",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca13<-stats_2014%>%
+  subset(Team == "LAC")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="LAC",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca14<-stats_2014%>%
+  subset(Team == "LAL")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="LAL",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+ca15<-stats_2014%>%
+  subset(Team == "MEM")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="MEM",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca16<-stats_2014%>%
+  subset(Team == "MIA")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="MIA",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+ca17<-stats_2014%>%
+  subset(Team == "MIL")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="MIL",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca18<-stats_2014%>%
+  subset(Team == "MIN")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="MIN",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+ca19<-stats_2014%>%
+  subset(Team == "NOP")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="NOP",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca20<-stats_2014%>%
+  subset(Team == "NYK")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="NYK",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+ca21<-stats_2014%>%
+  subset(Team == "OKC")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="OKC",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca22<-stats_2014%>%
+  subset(Team == "ORL")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="ORL",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca23<-stats_2014%>%
+  subset(Team == "PHI")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="PHI",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca24<-stats_2014%>%
+  subset(Team == "PHO")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="PHO",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+ca25<-stats_2014%>%
+  subset(Team == "POR")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="POR",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca26<-stats_2014%>%
+  subset(Team == "SAC")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="SAC",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+ca27<-stats_2014%>%
+  subset(Team == "SAS")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="SAS",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca28<-stats_2014%>%
+  subset(Team == "TOR")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="TOR",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+ca29<-stats_2014%>%
+  subset(Team == "UTA")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="UTA",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+  
+ca30<-stats_2014%>%
+  subset(Team == "WAS")%>%
+  ggplot(aes(x=Game, y= AvgTeamPoints))+ geom_path()+
+  theme_light()+
+  labs(title="WAS",
+        x ="Game", y = "Average Team Points")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+ggarrange(ca1,ca2,ca3,ca4,ca5,ca6,ca7,ca8,ca9,ca10,ca11,ca12,ca13,ca14,ca15,ca16,ca17,ca18,
+          ca19,ca20,ca21,ca22,ca23,ca24,ca25,ca26,ca27,ca28,ca29,ca30,
+          ncol = 6, nrow = 5)
+```
+
+\newpage
 
 # Model
-field goal percentage~team+opponent+avg field goal percentage+Opp avg
+## Background
+
+Prior to developing the model, some statistical backgrounds have to be acknowledged. We have chosen to use a multiple linear regression model to predict the dependent variable - Point Spread, with some independent, observable variables. Multiple linear regression focuses on suggesting a relationship between multiple independent variables and a dependent variable.  General linear regression indicates that $y=X\beta+\epsilon$, where $y$ is the $n \times 1$ column matrix, and each $y_i$ is the response for the $i-th$ observation. $X$ is an $n \times (k+1)$ matrix of observed constant, containing $x_{ij}$ as the $j-th$ predictor for the $i-th$ observation. $\beta$ is a $(k+1) \times 1$ matrix of unknown constant, including the regression intercept and slope; and $\epsilon$ is a $n \times 1$ matrix of unknown constant as an error term. The general model can be both denoted in matrix form or scalar form, and we are going to use the scalar form below to indicate each predictor variables. To develop a multiple linear regression model, some conditions have to be met, and failure to achieve all assumptions may result in inaccuracy. Most importantly, as a linear model, there has to be a linear relationship between each independent variable and the dependent variable, which is shown in Figure (\@ref(fig:check)). Moreover, we also assumes the normality of residuals, no multicollinearlity, and its homoscedasticity, in which all assumptions will be verified in the diagnostics plot(Figure \@ref(fig:plot1)).
+
+In this paper, the Point Spread of each NBA game in season 2014 is the independent variable, which is a $2460 \times 1$ vector containing all Point Spreads, and $yi$ is the point spread for the i-th game. Team and Opponent are categorical variables, with team ATL(Atlanta Hawks) as reference. As a result, there are 58 dummy variables created by r, in which we will indicate as $\sum_{i=1}^{58} \beta_{i}team_i$ for convenience. All other variables are denoted by $x_1-x_{11}$ respectively corresponding to Third Quarter Point Spread, Average Field Goal Percent, Average Opponent Field Goal Percent, Average Three Point Percent, Average Opponent Three Point Percent, Average Free Throw Percent, Average Opponent Free Throw Percent, Average Total Rebounds, Average Opponent Total Rebounds, Average Turnovers, and Average Opponent Turnovers. 
+
+As a result, the model is denoted as follows(Equation (1)):
+$$y_i=\beta_0+\sum_{i=1}^{58} \beta_{i}team_i+ \beta_1x_{i,1}+\beta_2x_{i,2}+\beta_3x_{i,3}+\beta_4x_{i,4}+\beta_5x_{i,5}+
+\beta_6x_{i,6}+\beta_7x_{i,7}+\beta_8x_{i,8}+\beta_9x_{i,9}+\beta_{10}x_{1,10}+\beta_{11}x_{i,11} $$
+$$\text{Equation: 1} $$
+
+## Model Development
+
+With the goal of predicting the Point Spread, we have chosen Team, Opponent, Third Quarter Point Spread, Average Field Goal Percent, Average Opponent Field Goal Percent, Average Three Point Percent, Average Opponent Three Point Percent, Average Free Throw Percent, Average Opponent Free Throw Percent, Average Total Rebounds, Average Opponent Total Rebounds, Average Turnovers, and Average Opponent Turnovers as our predictor variables. In the process of selecting the significant variables, we have tested different models with all variables and gradually remove each until drastic changes in model accuracy occur. Moreover, some variables in the raw data are contained in others, for example, offensive rebounds are included in total rebounds, and having it as a variable does not change the result. Therefore, we exclude all variables have either shown little relationship with the Point Spread, or are included in the existing variables. As a result, all the variables adopted in our model have shown significance, with the exception of Team and Opponent, which have shown to have the least relation with the Point Spread from the p-value. However, we decide to include them with the reasoning as follows. Consider the situation where two opponent teams have the exact performance history(ie. cumulative averages for every game being completely equal); though the probability is low, we would still wish to predict which team is more likely to be ahead for certain points. Therefore, having Team and Opponent as categorical variables will provide a prediction favorable to the winning Team.
 
 
-point spread(team points-opponent points) ~  team + opponent_team + predicted_field_goal_percentage(past game avg home or opp) + predicted_opponent_field_goal_percentage + predicted_3point_percent + predicted_opponent3point_percent
-```{r, include=FALSE}
+That being said, we test out if the variables above can accurately predict the Point Spread, using just the variables given. The model is given in Equation(2) as follows:
 
-model1<- lm(PointSpread~Team+Opponent+
+$$y_i=\beta_0+\sum_{i=1}^{58} \beta_{i}team_i+ \beta_1\text{ThirdQuarterPointSpread}_i+\beta_2\text{FieldGoalPercent}_i+\beta_3\text{OppnentFieldGoalPercent}_i$$
+$$+\beta_4\text{ThreePointPercent}_i+\beta_5\text{OpponentFieldGoalPercent}_i+\beta_6\text{FreeThrowPercent}_i+\beta_7\text{OpponentFreeThrowPercent}_i$$
+$$+\beta_8\text{TotalRebounds}_i+\beta_9\text{OpponentTotalRebounds}_i+\beta_{10}\text{Turnovers}_{i}+\beta_{11}\text{OpponentTurnovers}_{i}$$
+$$ \text{Equation: 2} $$
+
+In Equation (2), all the predictor variables are from the result of each game, which is the information we would not know while predicting the Point Spread. It is shown in Table (4) that all variables besides the categorical variables have a p-value of less than 0.05, meaning they are significant. Though some of the categorical dummy variables have larger p-values, they still provide a general estimate of how the team performs. The summary of the model below(Table (4)) shows a residual standard error of 3.63, and a Multiple R-squared of 0.9304. The residual standard error error indicates that the actual point spread shows a 3.63 difference of the predicted point spread on average, and Multiple R-squared indicates that approximately 93% of the variance in Point Spread can be explained by the predictor variables. The model shown in equation (2) has been tested to be the most efficient reduction from all the variables in the data, meaning it has the least number of predictors while still producing reliable results. The results from this model indicates that if the cumulative sum of each predictor is close enough to the actual team performance in a game, then our final model in equation (1) would show similar result. 
+
+
+
+The next step is to use the cumulative averages of all the predictor variables, as shown in equation (1). If the cumulative average can provide an accurate estimation of a team's in game performance, then the model should have similar result as the prior model. Table (6) shows a summary of the final model. From Table (6), we can see that the adjusted R-squared changes to 0.71, which is significantly lower than the first model shown. This result is expected since the in game stats may differ from a team's average. 0.71 indicates that 71% of the variance can be explained using the model, though it is not as high as the previous model, it still gives reasonable results. 
+
+
+The model development is done in R(@citeR), using corrr(@cite_corrr) and pander(@cite_pander) for formatting tables. Plots for the final model are included in section 4, and we will further discuss the results and plots in section 5. 
+
+\newpage
+
+```{r sumx, fig.cap="Test Ideal Model Fit Summary", fig.dim=c(40,50), echo=FALSE}
+library(pander) #for summary stats tables
+## Use current Data to see if model fits
+modelx<- lm(PointSpread~ Team+Opponent+
+              ThirdQuarterPointSpread+
              FieldGoalPercent+OppFieldGoalPercent+
              ThreePointPercent+OppThreePointPercent+
              FreeThrowPercent+OppFreeThrowPercent+
              TotalRebounds+OppTotalRebound+
-             Turnovers+OppTurnover, stats_2014)
-
-model2<- lm(WINorLOSS~Team+Opponent+
-             FieldGoalPercent+OppFieldGoalPercent+
-             ThreePointPercent+OppThreePointPercent+
-             FreeThrowPercent+OppFreeThrowPercent+
-             TotalRebounds+OppTotalRebound+
-             Turnovers+OppTurnover, stats_2014)
-
-Bayes_Model_Binary <- brm(formula = WINorLOSS~Team+Opponent+
-             FieldGoalPercent+OppFieldGoalPercent+
-             ThreePointPercent+OppThreePointPercent+
-             FreeThrowPercent+OppFreeThrowPercent+
-             TotalRebounds+OppTotalRebound+
-             Turnovers+OppTurnover,
-                          data=stats_2014, 
-                          chains = 2,
-                          family = bernoulli(link = "logit"),
-                          seed = 123)
+             Turnovers+OppTurnover, mid_2014)
 
 
-Bayes_point_spread <- brm(formula =PointSpread~Team+Opponent+
-             FieldGoalPercent+OppFieldGoalPercent+
-             ThreePointPercent+OppThreePointPercent+
-             FreeThrowPercent+OppFreeThrowPercent+
-             TotalRebounds+OppTotalRebound+
-             Turnovers+OppTurnover,
-                          data=stats_2014, 
-                          chains = 2,
-                          family = bernoulli(link = "logit"),
-                          seed = 123)
-
-summary(model1)
-
-
-model%>%
-  tidy() %>%
-  kable()
+pander(summary(modelx), caption = "Test Ideal Model Fit Summary")
 ```
 
 
-```{r}
+\newpage
 
+```{r cumsum, fig.cap="Real Model Fit SUmmary"}
+### Now its time for our real model:)
+cumsum_model<-lm(PointSpread~0+Team+Opponent+ThirdQuarterPointSpread+
+             AvgFieldGoalPercent+AvgOppFieldGoalPercent+
+             AvgThreePointPercent+AvgOppThreePointPercent+
+             AvgFreeThrowPercent+AvgOppFreeThrowPercent+
+             AvgTotalRebounds+AvgOppTotalRebounds+
+             AvgTurnovers+AvgOppTurnovers, mid_2014)
+
+pander(summary(cumsum_model), caption = "Real Model Fit Summary")
 ```
+
+\newpage
 
 # Result
+```{r check, fig.cap= "Check Linearality for each Predictor Variable", fig.dim=c(50,40),echo=FALSE, warning=FALSE, message=FALSE}
+x1<-mid_2014%>%
+  ggplot(aes(x=ThirdQuarterPointSpread, y=PointSpread))+geom_point()+
+  theme_light()+
+  labs(title="Third Quarter Point Spread vs. Point Spread",
+        x ="Third Quarter Point Spread", y = "Point Spread")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
 
+x2<-mid_2014%>%
+  ggplot(aes(x=AvgFieldGoalPercent, y=PointSpread))+geom_point()+
+  theme_light()+
+  labs(title="Average Field Goal Percent",
+        x ="Average Field Goal Percent", y = "Point Spread")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+x3<-mid_2014%>%
+  ggplot(aes(x=AvgOppFieldGoalPercent, y=PointSpread))+geom_point()+
+  theme_light()+
+  labs(title="Avg Opponent Field Goal Percent",
+        x ="Avg Opponent Field Goal Percent", y = "Point Spread")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+x4<-mid_2014%>%
+  ggplot(aes(x=AvgThreePointPercent, y=PointSpread))+geom_point()+
+  theme_light()+
+  labs(title="Average Three Point Percent",
+        x ="Average Three Point Percent", y = "Point Spread")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+x5<-mid_2014%>%
+  ggplot(aes(x=AvgOppThreePointPercent, y=PointSpread))+geom_point()+
+  theme_light()+
+  labs(title="Average Three Point Percent",
+        x ="Average Opponent Three Point Percent", y = "Point Spread")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+x6<-mid_2014%>%
+  ggplot(aes(x=AvgFreeThrowPercent, y=PointSpread))+geom_point()+
+  theme_light()+
+  labs(title="Average Free Throw Percent",
+        x ="Average Free Throw Percent", y = "Point Spread")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+x7<-mid_2014%>%
+  ggplot(aes(x=AvgOppFreeThrowPercent, y=PointSpread))+geom_point()+
+  theme_light()+
+  labs(title="Average Opponent Free Throw Percent",
+        x ="Average Opponent Free Throw Percent", y = "Point Spread")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+
+x8<-mid_2014%>%
+  ggplot(aes(x=AvgTotalRebounds, y=PointSpread))+geom_point()+
+  theme_light()+
+  labs(title="Average Total Rebounds",
+        x ="Average Total Rebounds", y = "Point Spread")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+x9<-mid_2014%>%
+  ggplot(aes(x=AvgOppTotalRebounds, y=PointSpread))+geom_point()+
+  theme_light()+
+  labs(title="Average Opponent Total Rebounds",
+        x ="Average Opponent Total Bebounds", y = "Point Spread")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+x10<-mid_2014%>%
+  ggplot(aes(x=AvgTurnovers, y=PointSpread))+geom_point()+
+  theme_light()+
+  labs(title="Average Total Rebounds",
+        x ="Average Total Rebounds", y = "Point Spread")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+
+x11<-mid_2014%>%
+  ggplot(aes(x=AvgOppTurnovers, y=PointSpread))+geom_point()+
+  theme_light()+
+  labs(title="Average Opponent Total Rebounds",
+        x ="Average Opponent Total Rebounds", y = "Point Spread")+
+  theme(axis.text.x = element_text(face="bold",
+                           size=30),
+          axis.text.y = element_text(face="bold", 
+                           size=30))+
+  theme(plot.title = element_text(face = "bold", size=40))+
+  theme(axis.text=element_text(size=30),
+        axis.title=element_text(size=30,face="bold"))
+
+
+ggarrange(x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,
+          ncol = 3, nrow = 4)
+
+```
+
+
+```{r plot1, fig.cap="Diagnostic Plots for Regression Model" , echo=FALSE,  message=FALSE, warning=FALSE}
+par(mfrow = c(2, 2))
+plot(cumsum_model)
+```
+
+
+
+```{r pred2015, fig.cap="Season 2015 Predicted Point Spread compared to Actual Point Spread", message=FALSE}
+# 2015 data model verification
+# make the 2015 data the same as 2014 above
+midgame<-midgame%>%
+  mutate(third_quarter_score = select(., Q1:Q3) %>% rowSums(na.rm = TRUE))
+
+midgame_2015<-midgame%>%
+  filter(Season==15)%>%
+  select(Date,
+         Team,
+         third_quarter_score)
+
+games_stats <- games_stats%>%
+  mutate(PointSpread=TeamPoints-OpponentPoints)
+
+games_stats <- games_stats%>%
+  mutate(DateNum=as.numeric(gsub("-","",Date)))
+
+games_stats <- games_stats%>%
+  mutate_at(vars(WINorLOSS), .funs = 
+              funs(case_when(.=="W"~1,
+                             .=="L"~0)))
+
+stats_2015 <- 
+  games_stats %>% 
+  select(Team, 
+         Opponent, 
+         Home,
+         Game, 
+         Date, 
+         WINorLOSS,
+         PointSpread,
+         TeamPoints, 
+         OpponentPoints, 
+         FieldGoalPercent = FieldGoals., 
+         OppFieldGoalPercent = Opp.FieldGoals., 
+         ThreePointPercent = X3PointShots., 
+         OppThreePointPercent = Opp.3PointShots.,
+         FreeThrowPercent = FreeThrows.,
+         OppFreeThrowPercent = Opp.FreeThrows.,
+         TotalRebounds,
+         OppTotalRebound = Opp.TotalRebounds,
+         Turnovers,
+         OppTurnover = Opp.Turnovers)%>%
+  filter(games_stats$DateNum>=20151027& games_stats$DateNum<=20160619)
+
+# Add cumulative field goal average for each game played as a part of the data
+stats_2015<-stats_2015%>%
+  group_by(Team)%>%
+  mutate(AvgTeamPoints=(cumsum(TeamPoints)-TeamPoints)/(Game-1))
+
+stats_2015<-stats_2015%>%
+  group_by(Team)%>%
+  mutate(AvgOppPoints=(cumsum(OpponentPoints)-OpponentPoints)/(Game-1))
+
+stats_2015<-stats_2015%>%
+  group_by(Team)%>%
+  mutate(AvgFieldGoalPercent=(cumsum(FieldGoalPercent)-FieldGoalPercent)/(Game-1))
+
+stats_2015<-stats_2015%>%
+  group_by(Team)%>%
+  mutate(AvgOppFieldGoalPercent=(cumsum(OppFieldGoalPercent)-OppFieldGoalPercent)/(Game-1))
+
+stats_2015<-stats_2015%>%
+  group_by(Team)%>%
+  mutate(AvgThreePointPercent=(cumsum(ThreePointPercent)-ThreePointPercent)/(Game-1))
+
+stats_2015<-stats_2015%>%
+  group_by(Team)%>%
+  mutate(AvgOppThreePointPercent=(cumsum(OppThreePointPercent)-OppThreePointPercent)/(Game-1))
+
+stats_2015<-stats_2015%>%
+  group_by(Team)%>%
+  mutate(AvgFreeThrowPercent=(cumsum(FreeThrowPercent)-FreeThrowPercent)/(Game-1))
+
+stats_2015<-stats_2015%>%
+  group_by(Team)%>%
+  mutate(AvgOppFreeThrowPercent=(cumsum(OppFreeThrowPercent)-OppFreeThrowPercent)/(Game-1))
+
+stats_2015<-stats_2015%>%
+  group_by(Team)%>%
+  mutate(AvgTotalRebounds=(cumsum(TotalRebounds)-TotalRebounds)/(Game-1))
+
+stats_2015<-stats_2015%>%
+  group_by(Team)%>%
+  mutate(AvgOppTotalRebounds=(cumsum(OppTotalRebound)-OppTotalRebound)/(Game-1))
+
+stats_2015<-stats_2015%>%
+  group_by(Team)%>%
+  mutate(AvgTurnovers=(cumsum(Turnovers)-Turnovers)/(Game-1))
+
+stats_2015<-stats_2015%>%
+  group_by(Team)%>%
+  mutate(AvgOppTurnovers=(cumsum(OppTurnover)-OppTurnover)/(Game-1))
+
+
+
+## Merge two data together ##
+mid_2015<-merge(stats_2015, midgame_2015, 
+                by.x = c("Date", "Team"),
+                by.y = c("Date", "Team"))
+
+mid_2015<-merge(mid_2015, midgame_2015,
+                by.x = c("Date", "Opponent"),
+                by.y = c("Date", "Team"))
+# rename
+mid_2015<-mid_2015%>%
+  rename(TeamThirdQuarter=third_quarter_score.x,
+         OppThirdQuarter=third_quarter_score.y)
+
+# Add point spread third quarter
+ThirdQuarterPointSpread<-mid_2015$TeamThirdQuarter-mid_2015$OppThirdQuarter
+mid_2015<-cbind(mid_2015, ThirdQuarterPointSpread)
+
+# select only second half season data 
+mid_2015<- mid_2015%>%
+  filter(Game>41)
+
+
+pred_int<-data.frame(predict(cumsum_model, mid_2015, interval = "prediction"))
+
+mid_2015<-cbind(mid_2015, "Predict"=pred_int)
+
+
+mid_2015%>%
+  ggplot(aes(x=Predict.fit, y=PointSpread))+ geom_point(shape=18)+
+  theme_light()+
+  labs(title="2015 Point Spread vs. Predict Point Spread",
+        x ="Predicted Point Spread", y = "2015 Point Spread")+
+  theme(axis.text.x = element_text(face="bold"),
+          axis.text.y = element_text(face="bold"))+
+  theme(plot.title = element_text(face = "bold"))+
+  theme(axis.title=element_text(face="bold"))+
+  stat_smooth(method = lm)+
+  geom_line(aes(y = Predict.lwr), color = "red", linetype = "dashed")+
+  geom_line(aes(y = Predict.upr), color = "red", linetype = "dashed")
+
+```
+
+
+
+```{r predtab, message=FALSE, warning=FALSE}
+library(data.table)
+set.seed(10)
+
+mid_2015_sample <- data.table(mid_2015)%>%
+  select(Game, Team, Opponent,PointSpread, Predict.fit, Predict.lwr, Predict.upr)
+
+knitr::kable(mid_2015_sample[sample(.N, 10)], caption = "Prediction of Point Spread with 10 randomly sampled games")
+
+```
+
+
+
+\newpage
 
 # Discussion
 
+The section above demonstrates the results of our model, including diagnostics using season 2014 data, and some predictions using 2015 data. The figure indicates that our model failed to sufficiently predict the Point Spread, however, it could potentially be used to predict the Money Line result. 
 
-# Apendix
+Figure \@ref(fig:check) demonstrates the relationship of each independent variable and the Point Spread. From the graph, Third Quarter Point Spread appears to have the strongest linear relation with the final point spread with very few outliners. It explains the reason of Third Quarter Point Spread having the smallest p-value, rejecting the hypothesis that it is not significant. All other predictors tends to be linear as well, however, with higher variance. But we can use the method of least square to approximate a straight line through the points. 
 
+In addition, Figure \@ref(fig:plot1) contains 4 diagnostic plots, in which we can use to analyze the model fit. First of all, the Residuals vs Fitted also shows the linear relationship between the independent variables and the dependent variables in a general sense, comparing to showing relationships of each variable separately in \@ref(fig:check). It is demonstrated that the residuals follow a linear tendency as the red line appears to be horizontal; however, the variance spreads within a 40 points interval, which may the difference between the prediction and the actual point spread. Secondly, the Normal Q-Q plot from Figure\@ref(fig:plot1) successfully indicates that the residuals are normally distributed, which is what we are looking for in a model, satisfying the second assumption for applying linear regression. Scale-Location plot demonstrates that the residuals are evenly spread along the range of predictors, and the spread seems to be evenly distributed along the fitted value, which is also a good indicator. Moreover, the Residuals vs Leverage plot shows if there are influential cases such as outlines that will impact the accuracy of our model significantly. From the plot, all residuals seem to be clustered on the right, and it does not seem to have any influential cases that will impact the result drastically. Figure \@ref(fig:plot1) suggests that our model is efficient to explain the relation of the independent and dependent variables. 
+
+For model verification, we have decided to use real NBA data from Season 2015, hoping that the model will be able to predict the Point Spread. We have plotted the predicted point spread against the actual point spread in figure \@ref(fig:pred2015). An ideal plot would have an approximate slope of 1, in which each predicted value perfectly corresponds to the actual Point Spread in 2015. However, the blue regression line shows an approximated slope of 1.4, meaning that we failed to accurately predict some of the Point Spread outcomes in 2015. Moreover, the dotted red lines are the upper and lower prediction interval, which reflects the uncertainly of each predicted value, whereas the gray strip indicates the confidence interval. It can be shown by the graph that our model is not accurate enough to predict the point spread in each game.
+
+The results from figure \@ref(fig:pred2015) may seem a bit discouraging as it is not sufficient enough to predict the point spread, especially in betting when we are against the betting-line set by the sports book. However, the graph does indicate the majority of the positive predicted point spreads map to actual positive point spreads, negative point spreads map to negatives. Therefore, our model still holds its value for betting on the Money Line to predict the winning team. We took this idea further, and drew 10 random games from Season 2015. With the data we already have, Table \@ref(tab:predtab) shows the prediction for each game's team spread, as well as the prediction interval. We only accurately predicted 1 of the point spread - game 66 of ATL vs. MEM. The prediction shows a 12.72 point Point Spread with ATL in favor, which is exactly the Point Spread of that game. Regardless, we can see that the model successfully predicted 9 out of 10 games for points being positively or negatively spread. A positive Point Spread indicates the Home Team winning, and from table \@ref(tab:predtab), the only game we have wrongly predicted is the 59th game of CLE vs. IND. The prediction indicates that IND would win by approximately 0.3 points, however, CLE won by 4 percent. In conclusion, although our model is not sufficient enough to predict the Point Spread, it shows a high accuracy of predicting the winning team which could be used for betting the Money Line.
+
+Our result have some potential weaknesses and ts limitations due to the unpredictable nature of basketball, which cannot be generalized by just the team performance. More specifically, each player has significant impact on the game, which are not accounted for in the model. For example, a team's best player being injured will not only drastically impact the game results, but also may impact the rest of the seasonal performance of that team. The players are not constant in each game, which should also be accounted for as it might cause the performance to differ from the average. Moreover, some of the predictor variables from our model are not independent, which results in potential multicollinearlity. A linear model assumes all independent variables are independent from each other, in basketball, it is almost impossible to achieve as each aspects are closly related to each other. However, that being said, our model can be further improved in future studies. Figure \@ref(fig:check) has shown that the most influencial perdictor is the point spread in the third quarter of that game, which is before bets close. Therefore, we could potentially find or create a dataset with in-game information of the third quarter, and use it to build a model, which may result in significantly higher accuracy.
+
+
+\newpage
+
+# Appendix
+[1] github repo: “https://github.com/mackenziequ/NBA-prediction”
 
 # Reference
 
